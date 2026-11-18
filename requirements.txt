@@ -1,0 +1,6 @@
+manifold3d
+trimesh
+shapely
+numpy
+matplotlib
+svgelements

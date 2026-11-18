@@ -1,0 +1,22 @@
+Card Trainers: 3D models and images
+Copyright (c) 2026 Dmitry Fink
+
+The 3D models (everything in stl/) and the images (everything in images/) are
+licensed under the Creative Commons Attribution-ShareAlike 4.0 International
+License (CC BY-SA 4.0), except for the FINIK FORGE logo, see below.
+
+You are free to share and adapt this material for any purpose, even
+commercially, as long as you give appropriate credit, link to the license,
+indicate if changes were made, and distribute your contributions under the
+same license.
+
+Summary: https://creativecommons.org/licenses/by-sa/4.0/
+Full legal text: https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+The FINIK FORGE logo (art/finikforge_logo.svg, and the logo artwork on the back
+of the cards) is not covered by this license. All rights reserved. To print
+trainers with your own artwork, replace art/finikforge_logo.svg or set
+BACK = "valknut" in source/trainers.py.
+
+The source code in source/ is licensed separately under the MIT License; see
+LICENSE.

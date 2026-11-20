@@ -15,8 +15,8 @@ Full legal text: https://creativecommons.org/licenses/by-sa/4.0/legalcode
 
 The FINIK FORGE logo (art/finikforge_logo.svg, and the logo artwork on the back
 of the cards) is not covered by this license. All rights reserved. To print
-trainers with your own artwork, replace art/finikforge_logo.svg or set
-BACK = "valknut" in source/trainers.py.
+trainers without it, use the "tiles" or "valknut" backs (VARIANTS in
+source/trainers.py), or replace art/finikforge_logo.svg with your own artwork.
 
 The source code in source/ is licensed separately under the MIT License; see
 LICENSE.

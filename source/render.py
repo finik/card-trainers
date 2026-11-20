@@ -12,7 +12,7 @@ import trainers as t
 
 PKG = t.PKG
 IMG = os.path.join(PKG, "images")
-COL = {"body": "#2b2b2e", "logo": "#d1202b", "pips": "#a4a6aa"}
+COL = {"body": "#2b2b2e", "logo": "#d1202b", "pips": "#a4a6aa", "pattern": "#c9a24a"}   # pattern: preview colour for slot 4
 
 def hexrgb(h): return np.array([int(h[i:i+2], 16) for i in (1, 3, 5)]) / 255.0
 
@@ -93,10 +93,10 @@ def render(items, eye, target, out, W=1600, H=1200, fov=30.0, ss=2, up=(0, 0, 1)
     print("wrote", os.path.relpath(out, PKG))
 
 # ---------------------------------------------------------------- scenes
-def card_items(rank, M):
+def card_items(rank, M, back="logo"):
     """coloured parts of one trainer, moved by the 4x4 matrix M"""
     items = []
-    for name, (m, _) in t.trainer(rank).items():
+    for name, (m, _) in t.trainer(rank, back).items():
         tm = t.to_tm(m); tm.apply_transform(M)
         items.append((tm, hexrgb(COL[name])))
     return items
@@ -106,15 +106,18 @@ def T(x=0, y=0, z=0, rz=0, rx=0):
     return R.translation_matrix((x, y, z)) @ R.rotation_matrix(radians(rz), (0, 0, 1)) @ R.rotation_matrix(radians(rx), (1, 0, 0))
 
 def flat_faces(out):
-    """exact 2D artwork: the five fronts and the back"""
+    """exact 2D artwork: the five fronts and each back variant"""
     def draw(ax, g, c, bg):
         for p in ([g] if g.geom_type == "Polygon" else g.geoms):
             ax.fill(*p.exterior.xy, color=c, lw=0)
             for i in p.interiors: ax.fill(*i.xy, color=bg, lw=0)
-    fig, axs = plt.subplots(1, 6, figsize=(18, 4.6))
+    n = len(t.RANKS) + len(t.VARIANTS)
+    fig, axs = plt.subplots(1, n, figsize=(3*n, 4.6))
     for ax, r in zip(axs, t.RANKS):
         draw(ax, t.card_outline(), COL["body"], COL["body"]); draw(ax, t.pips_face(r), COL["pips"], COL["body"])
-    draw(axs[5], t.card_outline(), COL["body"], COL["body"]); draw(axs[5], t.logo(), COL["logo"], COL["body"])
+    for ax, back in zip(axs[len(t.RANKS):], t.VARIANTS):
+        draw(ax, t.card_outline(), COL["body"], COL["body"])
+        for name, (g, _) in t.back_parts(back).items(): draw(ax, g, COL[name], COL["body"])
     for ax in axs: ax.set_aspect("equal"); ax.axis("off")
     plt.savefig(out, dpi=220, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
@@ -124,13 +127,16 @@ if __name__ == "__main__":
     os.makedirs(IMG, exist_ok=True)
     flat_faces(os.path.join(IMG, "faces.png"))
 
-    # hero: the 2..6 laid out face-up, a sixth card flipped to show the back
+    # hero: the 2..6 laid out face-up, then one card flipped per back variant
     items = []
-    tilt = (3, -2, 2, -3, 1)
+    tilt = (3, -2, 2, -3, 1, -3, 2, -2)
+    mid = (len(t.RANKS) + len(t.VARIANTS) - 1)/2
     for i, r in enumerate(t.RANKS):
-        items += card_items(r, T(x=(i - 2.5)*74, rz=tilt[i]))
-    items += card_items(2, T(x=2.5*74 + 4, rz=-3) @ T(z=t.T, rx=180, rz=180))   # rx flips it, rz turns the logo upright
-    render(items, (0, -330, 480), (0, -5, 0), os.path.join(IMG, "hero.png"), W=1800, H=900, fov=34)
+        items += card_items(r, T(x=(i - mid)*74, rz=tilt[i]))
+    for j, back in enumerate(t.VARIANTS):
+        i = len(t.RANKS) + j
+        items += card_items(2, T(x=(i - mid)*74 + 4, rz=tilt[i]) @ T(z=t.T, rx=180, rz=180), back)   # rx flips it, rz turns the art upright
+    render(items, (0, -400, 560), (0, -5, 0), os.path.join(IMG, "hero.png"), W=2000, H=900, fov=36)
 
     # the five packets squared up into one deck
     items = []

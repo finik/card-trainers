@@ -1,11 +1,12 @@
 """
 Cardistry trainers: a deck split into 5 solid packets.
-Front: 2..6 of diamonds pips. Back: the finik/finikforge logo (art/finikforge_logo.svg), or just its valknut. Both inlaid INK_LAYERS deep, faces stay flat.
-Exports stl/trainers.3mf: one object per trainer, parts body/logo/pips on filaments 1/2/3 (black/red/gray).
+Front: 2..6 of diamonds pips. Back: the finik/finikforge logo (art/finikforge_logo.svg), a valknut pattern, or one valknut.
+Both faces inlaid INK_LAYERS deep, so they stay flat.
+Exports stl/trainers_<back>.3mf per VARIANTS: one object per trainer, parts body/logo/pips on filaments 1/2/3 (black/red/gray).
 Run:  python3 source/trainers.py
 """
 import os, re, numpy as np, trimesh
-from shapely.geometry import Polygon, box
+from shapely.geometry import Point, Polygon, box
 from shapely import make_valid
 from svgelements import SVG, Path, Line, Move, Close
 from shapely.geometry.polygon import orient
@@ -23,9 +24,13 @@ RANKS = (2, 3, 4, 5, 6)
 PIP, PIP_W = 13.0, 9.6                           # diamond pip height, width
 PIP_COL, PIP_ROW = 14.5, 28.0                    # pip column / top-row offsets from the card centre
 
-BACK = "logo"                                    # "logo" (full finikforge logo) or "valknut"
+VARIANTS = ("logo", "tiles", "combo")            # backs to export: "logo" (finikforge logo), "tiles" (valknut pattern),
+                                                 # "combo" (logo ringed by the pattern), "valknut" (one big one)
 LOGO_D = 56.0                                    # logo diameter (card is 63.5 wide)
 VK_W, VK_GAP = 46.0, 1.0                         # valknut width, weave gap between its three pieces
+TILE_S, TILE_GAP, TILE_WEAVE = 16.0, 1.0, 0.7    # tiled back: grid triangle side, gap between valknuts, weave gap inside each
+TILE_MARGIN = 3.0                                # plain border around the tiled back
+COMBO_LOGO_D = 48.0                              # combo back: logo diameter; the pattern is clipped TILE_GAP around it
 
 # finik/finikforge vk.py: the three interlaced pieces of the valknut (SVG units, y down)
 VK_PATHS = [
@@ -99,15 +104,88 @@ def svg_poly(d):
         pts.append(cur.copy())
     return Polygon([(x, -y) for x, y in pts])
 
-def valknut():
-    """the three finikforge pieces, each shrunk by half the gap so the weave reads; centred, VK_W wide"""
+def valknut(w=VK_W, gap=VK_GAP):
+    """the three finikforge pieces, each shrunk by half the gap so the weave reads; bbox centred, w wide"""
     pieces = [orient(svg_poly(d)) for d in VK_PATHS]
     x0, y0, x1, y1 = unary_union(pieces).bounds
-    sc = VK_W/(x1 - x0)
+    sc = w/(x1 - x0)
     pieces = [affinity.scale(affinity.translate(p, -(x0 + x1)/2, -(y0 + y1)/2), sc, sc, origin=(0, 0)) for p in pieces]
-    return unary_union([p.buffer(-VK_GAP/2, join_style=2) for p in pieces])
+    return unary_union([p.buffer(-gap/2, join_style=2) for p in pieces])
 
-def logo():
+def tri_fit(g):
+    """smallest upright equilateral triangle around g (the valknut's corners are cut off): (centre, side)"""
+    n = np.array([(np.cos(np.radians(a)), np.sin(np.radians(a))) for a in (270, 30, 150)])   # outward edge normals
+    pts = np.array(g.convex_hull.exterior.coords)
+    d = (pts @ n.T).max(0)                          # support offsets; n.c + r = d for each edge
+    r = d.sum()/3
+    c = np.linalg.solve(n[:2], d[:2] - r)
+    return c, 2*np.sqrt(3)*r
+
+def valknut_tiles(gap=TILE_GAP, hole=None, dx=0.0, dy=0.0, stars=False, margin=TILE_MARGIN):
+    """valknuts and upside-down valknuts on a triangular grid of side TILE_S, gap between neighbours,
+    clipped TILE_MARGIN inside the card and around `hole`; dx, dy shift the grid.
+    stars: fill the star-shaped space where six valknuts meet with a solid star, gap all round"""
+    S, H = TILE_S, TILE_S*np.sqrt(3)/2
+    w = TILE_S
+    for _ in range(3):                              # size it so its enclosing triangle leaves gap to each neighbour
+        up = valknut(w, TILE_WEAVE)
+        c, side = tri_fit(up)
+        w *= (S - gap*np.sqrt(3))/side
+    up = affinity.translate(up, -c[0], -c[1])       # enclosing triangle's centre at the origin
+    down = affinity.rotate(up, 180, origin=(0, 0))
+    tiles, verts = [], set()
+    for j in range(-int(CARD_H/H) - 1, int(CARD_H/H) + 2):
+        for k in range(-int(CARD_W/S)*2 - 2, int(CARD_W/S)*2 + 3):
+            x, y0 = k*S/2 + dx, (j - 0.5)*H + dy       # row j spans y0..y0+H; triangle k is centred on x
+            g = affinity.translate(up, x, y0 + H/3) if (k + j) % 2 == 0 else affinity.translate(down, x, y0 + 2*H/3)
+            tiles.append(g)
+            verts |= {(round(x + a*S/2, 4), round(y0 + b*H, 4)) for a, b in ((-1, 0), (1, 0), (0, 1))} if (k + j) % 2 == 0 else set()
+    if stars:                                       # largest six-pointed star that keeps the gap to the six valknuts around a vertex
+        v = min(verts, key=lambda p: (p[0] - dx)**2 + (p[1] - dy)**2)
+        near = unary_union([g for g in tiles if g.distance(Point(v)) < S])
+        def hexagram(r, rot):
+            tri = lambda a: Polygon([(r*np.cos(np.radians(a + 120*i)), r*np.sin(np.radians(a + 120*i))) for i in range(3)])
+            return unary_union([tri(rot), tri(rot + 60)])
+        best = None
+        for rot in (0, 30):
+            lo, hi = 0.0, S/2
+            for _ in range(30):
+                mid = (lo + hi)/2
+                lo, hi = (mid, hi) if not affinity.translate(hexagram(mid, rot), *v).buffer(gap).intersects(near) else (lo, mid)
+            if best is None or lo > best[0]: best = (lo, rot)
+        star = hexagram(*best)
+        tiles += [affinity.translate(star, a, b) for a, b in verts]
+    field = unary_union(tiles).intersection(card_outline().buffer(-margin))
+    if hole is not None: field = field.difference(hole)
+    keep = [p for p in getattr(field, "geoms", [field]) if p.area > 0.8 and not p.buffer(-0.3).is_empty]   # drop clipped slivers
+    return unary_union(keep)
+
+def pattern(hole=None):
+    """the valknut pattern with stars where six meet. The grid is shifted half a cell so it is symmetric and the
+    top and bottom rows end on whole valknuts; the border is set to where they end, so the half-stars line up with them"""
+    kw = dict(hole=hole, dx=TILE_S/2, dy=TILE_S*np.sqrt(3)/4)
+    m = CARD_H/2 - valknut_tiles(**kw).bounds[3]
+    field = valknut_tiles(stars=True, margin=m, **kw)
+    ex, ey = CARD_W/2 - m - 2.0, CARD_H/2 - m - 2.0      # drop the tiny leftover triangle in each corner
+    return unary_union([p for p in field.geoms if not (abs(p.centroid.x) > ex and abs(p.centroid.y) > ey)])
+
+def combo_parts():
+    """logo in the middle, the pattern clipped TILE_GAP around it; kept apart so each can take its own filament"""
+    lg = logo(COMBO_LOGO_D)
+    return lg, pattern(hole=lg.convex_hull.buffer(TILE_GAP))
+
+def combo(): return unary_union(combo_parts())
+
+def back_parts(back):
+    """{part: (2D art, filament)} for a back; only "combo" has two"""
+    if back == "combo":
+        lg, pat = combo_parts()
+        return {"logo": (lg, FIL_LOGO), "pattern": (pat, FIL_PATTERN)}
+    return {"logo": (BACKS[back](), FIL_LOGO)}
+
+BACKS = {"logo": lambda: logo(), "valknut": lambda: valknut(), "tiles": lambda: pattern(), "combo": lambda: combo()}
+
+def logo(d=LOGO_D):
     """finikforge logo: each SVG path filled evenodd, centred, LOGO_D across (at 56 mm: thinnest stroke 0.46, EST./2020)"""
     shapes = []
     for e in SVG.parse(LOGO_SVG).elements():
@@ -125,7 +203,7 @@ def logo():
         if g is not None: shapes.append(g)
     art = unary_union(shapes)
     x0, y0, x1, y1 = art.bounds
-    sc = LOGO_D/max(x1 - x0, y1 - y0)
+    sc = d/max(x1 - x0, y1 - y0)
     return affinity.scale(affinity.translate(art, -(x0 + x1)/2, -(y0 + y1)/2), sc, -sc, origin=(0, 0))   # SVG y is down
 
 # ---------------- solids ----------------
@@ -135,16 +213,18 @@ def to_tm(m):
     mesh = m.to_mesh()
     return trimesh.Trimesh(np.array(mesh.vert_properties)[:, :3], np.array(mesh.tri_verts))
 
-def trainer(rank):
-    """printed pips-up: logo on the bed side (mirrored so it reads right when flipped), diamonds on top.
+def trainer(rank, back="logo"):
+    """printed pips-up: back art on the bed side (mirrored so it reads right when flipped), diamonds on top.
     returns {part: (solid, filament)}"""
-    logo_ink = ext(affinity.scale(logo() if BACK == "logo" else valknut(), xfact=-1, origin=(0, 0)), 0, INK)
-    pips_ink = ext(pips_face(rank), T - INK, T)
-    body = ext(card_outline(), 0, T) - logo_ink - pips_ink
-    return {"body": (body, FIL_BODY), "logo": (logo_ink, FIL_LOGO), "pips": (pips_ink, FIL_PIPS)}
+    inks = {name: (ext(affinity.scale(g, xfact=-1, origin=(0, 0)), 0, INK), fil) for name, (g, fil) in back_parts(back).items()}
+    inks["pips"] = (ext(pips_face(rank), T - INK, T), FIL_PIPS)
+    body = ext(card_outline(), 0, T)
+    for m, _ in inks.values(): body = body - m
+    return {"body": (body, FIL_BODY), **inks}
 
 # ---------------- 3MF: one object per trainer, one part per colour ----------------
 FIL_BODY, FIL_LOGO, FIL_PIPS = 1, 2, 3          # filament slots: black, red, gray
+FIL_PATTERN = 4                                  # combo back only: the pattern around the logo
 BED, PLATE_GAP = 256.0, 8.0
 
 def plate_xy(i):
@@ -192,10 +272,12 @@ def export_3mf(path, cards):
 
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
-    cards = []
-    for r in RANKS:
-        parts = trainer(r)
-        cards.append((f"{r}_of_diamonds", parts))
-        print(f"{r} of diamonds: " + ", ".join(f"{k} {m.volume():.0f} mm3 (filament {f})" for k, (m, f) in parts.items()))
-    export_3mf(os.path.join(OUT, "trainers.3mf"), cards)
-    print("wrote stl/trainers.3mf")
+    for back in VARIANTS:
+        cards = []
+        for r in RANKS:
+            parts = trainer(r, back)
+            cards.append((f"{r}_of_diamonds", parts))
+            print(f"{back}: {r} of diamonds: " + ", ".join(f"{k} {m.volume():.0f} mm3 (filament {f})" for k, (m, f) in parts.items()))
+        name = f"trainers_{back}.3mf"
+        export_3mf(os.path.join(OUT, name), cards)
+        print("wrote stl/" + name)
